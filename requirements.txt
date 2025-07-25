@@ -1,0 +1,9 @@
+# Core dependencies for Cellpose-SAM tissue core segmentation
+torch
+cellpose>=4.0
+opencv-python>=4.5.0
+numpy>=1.21.0
+scikit-image>=0.18.0
+tifffile>=2021.7.2
+typer>=0.9.0
+scipy>=1.7.0
