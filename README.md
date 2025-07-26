@@ -32,6 +32,10 @@ pip install -r requirements.txt
 
 ```bash
 python simple_main.py --input your_image.tif --output results
+
+
+!!! Note, you'll most likely have to adjust the downsampling factor. ~16 works well for the thumbnail stain images, and the default works bettetr for the ~ 30k pixel image.
+
 ```
 
 ## Example with Performance Assessment
