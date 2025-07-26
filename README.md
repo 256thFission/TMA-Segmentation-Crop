@@ -56,10 +56,9 @@ python simple_main.py --input tissue_sample.tif --output results --expected-core
 | **Maximum Radius %** | `--max-radius-pct` | float | 30.0 | Maximum core radius as percentage of image width (filters large detections) | 30.0 |
 | **Flow Threshold** | `--flow-threshold` | float | 0.4 | Cellpose flow threshold - higher values reduce false positives | `0.6` |
 | **Cell Probability Threshold** | `--cellprob-threshold` | float | 0.0 | Cellpose cell probability threshold - higher values reduce noise detections | `0.3` |
-| **GPU Usage** | `--gpu` | flag | auto-detect | Force GPU usage if available (auto-detected by default) | Include flag |
-| **CPU Only** | `--no-gpu` | flag | False | Force CPU usage (overrides GPU detection) | Omit flag |
-| **Flat Field Correction** | `--flat-field` | flag | True | Enable flat field correction (illumination normalization) | Default ON |
-| **Disable Flat Field** | `--no-flat-field` | flag | False | Disable flat field correction | Use if images pre-corrected |
+| **Flat Field Correction** | `--flat-field` | flag | True | Enable flat field correction (illumination normalization).  | Default ON |
+
+
 
 ## Processing Pipeline
 

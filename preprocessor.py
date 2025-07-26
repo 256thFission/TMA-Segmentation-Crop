@@ -16,7 +16,7 @@ warnings.filterwarnings('ignore')
 class ImagePreprocessor:
     """Image preprocessing for tissue core detection"""
     
-    def __init__(self, downsample_factor=128, enhance_contrast=True, median_filter_size=3, flat_field_correction=False, flat_field_after_downsample=True):
+    def __init__(self, downsample_factor=128, enhance_contrast=True, median_filter_size=3, flat_field_correction=False):
         """
         Initialize preprocessor with simplified parameters
         
@@ -24,19 +24,17 @@ class ImagePreprocessor:
             downsample_factor: Downsampling factor to apply
             enhance_contrast: Whether to apply contrast enhancement
             median_filter_size: Size of median filter for noise reduction
-            flat_field_correction: Whether to apply flat field correction
-            flat_field_after_downsample: If True, apply correction after downsampling for speed
+            flat_field_correction: Whether to apply flat field correction. Correction is always applied after downsampling.
         """
         self.downsample_factor = downsample_factor
         self.enhance_contrast = enhance_contrast
         self.median_filter_size = median_filter_size
         self.flat_field_correction = flat_field_correction
-        self.flat_field_after_downsample = flat_field_after_downsample
         self.actual_downsample_factor = downsample_factor
     
     def process(self, image_path):
         """
-        Main preprocessing pipeline with adaptive downsampling
+        Main preprocessing pipeline 
         
         Returns:
             original_image: Full resolution image
@@ -48,17 +46,12 @@ class ImagePreprocessor:
         if original_image is None:
             return None, None, None
         
-        # Convert to grayscale if needed
+        # Convert to grayscale if not already
         if len(original_image.shape) > 2:
             if original_image.shape[2] > 1:
                 original_image = cv2.cvtColor(original_image, cv2.COLOR_RGB2GRAY)
             else:
                 original_image = original_image[:, :, 0]
-        
-        # Apply flat field correction (before downsampling by default)
-        if self.flat_field_correction and not self.flat_field_after_downsample:
-            print("Applying flat field correction BEFORE downsampling...")
-            original_image = self.apply_flat_field_correction(original_image)
         
         self.actual_downsample_factor = self.downsample_factor
         print(f"Using downsample factor: {self.actual_downsample_factor}")
@@ -66,9 +59,9 @@ class ImagePreprocessor:
         # Downsample for processing
         processed_image = self.downsample_image(original_image)
         
-        # Apply flat field correction (after downsampling, if requested)
-        if self.flat_field_correction and self.flat_field_after_downsample:
-            print("Applying flat field correction AFTER downsampling...")
+        # Apply flat field correction 
+        if self.flat_field_correction:
+            print("Applying flat field correction...")
             processed_image = self.apply_flat_field_correction(processed_image)
         
         # Enhance image
@@ -183,39 +176,6 @@ class ImagePreprocessor:
         binary_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_OPEN, kernel)
         
         return binary_mask
-    
-    def enhance_circular_features(self, image):
-        """Enhance circular features in the image"""
-        # Apply Gaussian blur to reduce noise
-        blurred = cv2.GaussianBlur(image, (5, 5), 0)
-        
-        # Use top-hat transform to enhance bright circular features
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-        tophat = cv2.morphologyEx(blurred, cv2.MORPH_TOPHAT, kernel)
-        
-        # Combine with original
-        enhanced = cv2.add(image, tophat)
-        
-        return enhanced
-    
-    def get_image_statistics(self, image):
-        """Get basic statistics about the image"""
-        stats = {
-            'shape': image.shape,
-            'dtype': str(image.dtype),
-            'min': float(np.min(image)),
-            'max': float(np.max(image)),
-            'mean': float(np.mean(image)),
-            'std': float(np.std(image)),
-            'percentiles': {
-                '1': float(np.percentile(image, 1)),
-                '5': float(np.percentile(image, 5)),
-                '50': float(np.percentile(image, 50)),
-                '95': float(np.percentile(image, 95)),
-                '99': float(np.percentile(image, 99))
-            }
-        }
-        return stats
     
     def apply_flat_field_correction(self, image):
         """
@@ -357,14 +317,12 @@ class ImagePreprocessor:
         # Create tissue mask using Otsu thresholding
         tissue_mask = self.create_tissue_mask(image)
         
-        # Invert to get background mask
         background_mask = ~tissue_mask
         
         # Erode background mask to ensure we're sampling pure background
         kernel = morphology.disk(erosion_size)
         background_mask = morphology.binary_erosion(background_mask, kernel)
         
-        # Remove small isolated background regions
         background_mask = morphology.remove_small_objects(
             background_mask, 
             min_size=100,

@@ -32,25 +32,14 @@ def main(
     max_radius_pct: float = typer.Option(30.0, help="Maximum core radius as % of image width"),
     flow_threshold: float = typer.Option(0.6, help="Cellpose flow threshold - increase to reduce false positives"),
     cellprob_threshold: float = typer.Option(0.3, help="Cellpose cell probability threshold - increase to reduce noise detections"),
-    gpu: bool = typer.Option(True, help="Use GPU if available (auto-detected by default)"),
-    no_gpu: bool = typer.Option(False, help="Force CPU usage"),
     flat_field: bool = typer.Option(True, help="Enable flat field correction (illumination normalization)"),
-    flat_field_after_downsample: bool = typer.Option(True, help="Apply flat field correction after downsampling (faster but less accurate)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging for debugging.")
 ):
     """Simplified main execution pipeline"""
     
     # Determine GPU usage
-    if no_gpu:
-        use_gpu = False
-        gpu_reason = "forced by --no-gpu flag"
-    elif gpu:
-        use_gpu = GPU_AVAILABLE
-        gpu_reason = "requested by --gpu flag" if GPU_AVAILABLE else "requested but not available"
-    else:
-        # Auto-detect: use GPU if available
-        use_gpu = GPU_AVAILABLE
-        gpu_reason = "auto-detected" if GPU_AVAILABLE else "not available"
+    use_gpu = GPU_AVAILABLE
+    gpu_reason = "auto-detected" if GPU_AVAILABLE else "not available"
     
     print("=== Cellpose-SAM Tissue Core Segmentation ===")
 
@@ -75,7 +64,10 @@ def main(
     
     # Create output directory
     os.makedirs(output, exist_ok=True)
-    crops_dir = os.path.join(output, "individual_cores")
+    img_basename = os.path.splitext(os.path.basename(input_path))[0]
+    img_dir = os.path.join(output, img_basename + "_processed")
+    os.makedirs(img_dir, exist_ok=True)
+    crops_dir = os.path.join(img_dir, "individual_cores")
     os.makedirs(crops_dir, exist_ok=True)
     
     start_time = datetime.now()
@@ -86,7 +78,7 @@ def main(
             downsample_factor=downsample,
             enhance_contrast=True,
             flat_field_correction=flat_field,
-            flat_field_after_downsample=flat_field_after_downsample
+            flat_field_after_downsample=True
         )
         detector = CellposeSAMDetector(use_gpu=use_gpu)
         print("Done.")
