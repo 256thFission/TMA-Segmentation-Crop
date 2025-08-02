@@ -26,7 +26,7 @@ except ImportError:
 def main(
     input_path: str = typer.Option(..., "--input", "-i", help="Input image path"),
     output: str = typer.Option("simple_output", "--output", "-o", help="Output directory"),
-    downsample: int = typer.Option(64, help="Downsample factor"),
+    downsample: int = typer.Option(64, "--downsample", help="Downsample factor"),
     expected_cores: Optional[int] = typer.Option(None, "--expected-cores", help="Optional: Expected number of cores for performance assessment."),
     min_radius_pct: float = typer.Option(1.0, help="Minimum core radius as % of image width"),
     max_radius_pct: float = typer.Option(30.0, help="Maximum core radius as % of image width"),
@@ -67,8 +67,12 @@ def main(
     img_basename = os.path.splitext(os.path.basename(input_path))[0]
     img_dir = os.path.join(output, img_basename + "_processed")
     os.makedirs(img_dir, exist_ok=True)
-    crops_dir = os.path.join(img_dir, "individual_cores")
-    os.makedirs(crops_dir, exist_ok=True)
+    crops_filtered_dir = os.path.join(img_dir, "cores_filtered")
+    crops_raw_dir = os.path.join(img_dir, "cores_raw")
+    masks_dir = os.path.join(img_dir, "masks")
+    os.makedirs(crops_filtered_dir, exist_ok=True)
+    os.makedirs(crops_raw_dir, exist_ok=True)
+    os.makedirs(masks_dir, exist_ok=True)
     
     start_time = datetime.now()
     print(f"[1/5] Initializing...", end="")
@@ -77,8 +81,7 @@ def main(
         preprocessor = ImagePreprocessor(
             downsample_factor=downsample,
             enhance_contrast=True,
-            flat_field_correction=flat_field,
-            flat_field_after_downsample=True
+            flat_field_correction=flat_field
         )
         detector = CellposeSAMDetector(use_gpu=use_gpu)
         print("Done.")
@@ -135,10 +138,18 @@ def main(
         overlay_path = os.path.join(output, "detection_overlay.png")
         cv2.imwrite(overlay_path, overlay_image)
 
-        cropped_info = crop_cores_with_masks(
-            original_image, detection_mask, filtered_cores, crops_dir,
-            padding_factor=1.2, scale_factor=scale_factor
+        # Create filtered crops (background removed) - saves masks directly to masks_dir
+        cropped_filtered_info = crop_cores_with_masks(
+            original_image, detection_mask, filtered_cores, crops_filtered_dir,
+            padding_factor=1.2, scale_factor=scale_factor, masks_dir=masks_dir
         )
+        
+        # Skip raw crops to avoid redundant full-res processing
+        # Raw crops would be created by crop_cores_simple() but that duplicates 
+        # the expensive full-resolution image processing
+        
+        # Use filtered info for the report
+        cropped_info = cropped_filtered_info
         print("Done.")
 
         # Generate report
@@ -157,7 +168,9 @@ def main(
             'individual_cores_cropped': len(cropped_info),
             'output_directory': output,
             'overlay_image': overlay_path,
-            'cores_directory': crops_dir
+            'cores_filtered_directory': crops_filtered_dir,
+            'cores_raw_directory': crops_raw_dir,
+            'masks_directory': masks_dir
         }
         
         report_path = os.path.join(output, 'detection_report.json')

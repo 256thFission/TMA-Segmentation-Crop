@@ -84,32 +84,50 @@ def create_simple_overlay(image, cores, mask=None):
 
 
 def crop_cores_simple(image, cores, output_dir, padding_factor=1.2):
-    """Simple core cropping function"""
+    """Simple core cropping function with circular mask"""
     cropped_info = []
     
     for i, (x, y, r) in enumerate(cores):
         try:
-            # Calculate crop boundaries with padding
+            # Define a square crop region
             crop_r = int(r * padding_factor)
-            x1 = max(0, x - crop_r)
-            y1 = max(0, y - crop_r)
-            x2 = min(image.shape[1], x + crop_r)
-            y2 = min(image.shape[0], y + crop_r)
+            x1, y1 = x - crop_r, y - crop_r
+            x2, y2 = x + crop_r, y + crop_r
+
+            # Ensure crop boundaries are within image dimensions
+            x1_safe, y1_safe = max(0, x1), max(0, y1)
+            x2_safe, y2_safe = min(image.shape[1], x2), min(image.shape[0], y2)
             
-            # Extract crop
-            crop = image[y1:y2, x1:x2]
+            crop = image[y1_safe:y2_safe, x1_safe:x2_safe]
+
+            # Create a circular mask that exactly matches the crop dimensions
+            mask = np.zeros(crop.shape[:2], dtype=bool)  # Create mask with exact crop dimensions
             
+            # Calculate center relative to the actual crop
+            center_y, center_x = y - y1_safe, x - x1_safe
+            
+            # Create the circular mask
+            for mask_y_idx in range(crop.shape[0]):
+                for mask_x_idx in range(crop.shape[1]):
+                    dist = np.sqrt((mask_x_idx - center_x)**2 + (mask_y_idx - center_y)**2)
+                    if dist <= r:
+                        mask[mask_y_idx, mask_x_idx] = True
+
+            # Apply mask (guaranteed to have matching shapes)
+            if len(crop.shape) == 3:
+                masked_crop = crop * mask[..., np.newaxis]
+            else:
+                masked_crop = crop * mask
+
             # Save crop
             crop_filename = f"core_{i+1:02d}.png"
             crop_path = os.path.join(output_dir, crop_filename)
             
-            # Ensure proper data type for saving
-            if crop.dtype != np.uint8:
-                crop_normalized = cv2.normalize(crop, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-            else:
-                crop_normalized = crop
-            
-            cv2.imwrite(crop_path, crop_normalized)
+            # Convert to uint8 for saving
+            if masked_crop.dtype != np.uint8:
+                masked_crop = cv2.normalize(masked_crop, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+            cv2.imwrite(crop_path, masked_crop)
             
             crop_info = {
                 'filename': crop_filename,
@@ -127,7 +145,7 @@ def crop_cores_simple(image, cores, output_dir, padding_factor=1.2):
     return cropped_info
 
 
-def crop_cores_with_masks(image, mask, cores, output_dir, padding_factor=1.2, scale_factor=1.0):
+def crop_cores_with_masks(image, mask, cores, output_dir, padding_factor=1.2, scale_factor=1.0, masks_dir=None):
     """Crop cores and save both image and binary mask for each core
     
     Args:
@@ -137,6 +155,7 @@ def crop_cores_with_masks(image, mask, cores, output_dir, padding_factor=1.2, sc
         output_dir: Directory to save crops
         padding_factor: Padding around each core (default 1.2)
         scale_factor: Factor to scale coordinates from processed to original image
+        masks_dir: Directory to save masks (if None, saves to output_dir)
         
     Returns:
         List of crop information dictionaries
@@ -164,10 +183,10 @@ def crop_cores_with_masks(image, mask, cores, output_dir, padding_factor=1.2, sc
             x2 = min(image.shape[1], orig_x + crop_r)
             y2 = min(image.shape[0], orig_y + crop_r)
             
-            # Extract image crop
+            # Extract image crop using safe boundaries
             image_crop = image[y1:y2, x1:x2]
             
-            # Extract mask crop - find the specific mask ID for this core
+            # Extract mask crop using the SAME safe boundaries to ensure matching dimensions
             # Get the mask value at the core center
             mask_y = min(orig_y, scaled_mask.shape[0] - 1)
             mask_x = min(orig_x, scaled_mask.shape[1] - 1)
@@ -175,7 +194,12 @@ def crop_cores_with_masks(image, mask, cores, output_dir, padding_factor=1.2, sc
             
             # Create binary mask for this specific core
             core_binary_mask = (scaled_mask == core_mask_id).astype(np.uint8)
+            # Use the same safe boundaries for mask crop
             mask_crop = core_binary_mask[y1:y2, x1:x2]
+            
+            # Ensure mask_crop exactly matches image_crop dimensions (robust fix for broadcasting errors)
+            if mask_crop.shape != image_crop.shape[:2]:
+                mask_crop = cv2.resize(mask_crop, (image_crop.shape[1], image_crop.shape[0]), interpolation=cv2.INTER_NEAREST)
             
             # Apply mask filtering to the image crop
             # Only preserve pixels within the detected core boundary
@@ -201,7 +225,9 @@ def crop_cores_with_masks(image, mask, cores, output_dir, padding_factor=1.2, sc
             
             # Save binary mask crop (convert to 255 for visibility)
             mask_filename = f"core_{i+1:02d}_mask.png"
-            mask_path = os.path.join(output_dir, mask_filename)
+            # Use masks_dir if provided, otherwise fall back to output_dir
+            mask_save_dir = masks_dir if masks_dir is not None else output_dir
+            mask_path = os.path.join(mask_save_dir, mask_filename)
             mask_crop_255 = mask_crop * 255  # Convert 0/1 to 0/255 for saving
             cv2.imwrite(mask_path, mask_crop_255)
             

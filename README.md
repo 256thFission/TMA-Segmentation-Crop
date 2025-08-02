@@ -59,12 +59,10 @@ python simple_main.py --input tissue_sample.tif --output results --expected-core
 | **Flat Field Correction** | `--flat-field` | flag | True | Enable flat field correction (illumination normalization).  | Default ON |
 
 
-
 ## Processing Pipeline
 
 ### Image Preprocessing (`preprocessor.py`)
 
-The preprocessing pipeline follows these steps:
 
 1. **Image Loading** - Multi-format support with automatic dimension handling
 2. **Flat Field Correction** - Illumination normalization using Gaussian and polynomial models
