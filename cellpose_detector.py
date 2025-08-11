@@ -34,7 +34,6 @@ class CellposeSAMDetector:
         """Initialize Cellpose-SAM model"""        
         try:
             print("Initializing Cellpose-SAM model...")            
-            # Initialize CellposeModel with GPU setting
             self.model = models.CellposeModel(gpu=self.use_gpu)
             
             print(f"Cellpose-SAM initialized successfully (GPU: {self.use_gpu})")
@@ -64,7 +63,6 @@ class CellposeSAMDetector:
             print(f"Image shape: {image.shape}")
             print(f"Parameters: diameter={diameter}, flow_threshold={flow_threshold}, cellprob_threshold={cellprob_threshold}")
 
-            # Cellpose-SAM expects RGB input but can handle grayscale
             if len(image.shape) == 2:
                 # Convert grayscale to 3-channel
                 image_input = np.stack([image, image, image], axis=-1)
@@ -106,9 +104,8 @@ class CellposeSAMDetector:
             print("Processing full image with Cellpose-SAM...")
             
             # Run Cellpose-SAM
-            #returns 3 values: masks, flows, styles
             masks, flows, styles = self.model.eval(
-                [image],  # Pass as list
+                [image], 
                 diameter=diameter,
                 flow_threshold=flow_threshold,
                 cellprob_threshold=cellprob_threshold
@@ -187,11 +184,9 @@ class CellposeSAMDetector:
 
     
     def is_available(self) -> bool:
-        """Check if Cellpose is available and initialized"""
         return self.model is not None
     
     def get_model_info(self) -> dict:
-        """Get information about the loaded model"""
         if self.model is None:
             return {'available': False}
         

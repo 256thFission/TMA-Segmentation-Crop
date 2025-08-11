@@ -7,6 +7,49 @@ import cv2
 import numpy as np
 
 
+def sort_cores_rowwise(cores, row_tolerance_factor=0.5):
+    """Sort cores in row-wise order (left-to-right, top-to-bottom)
+    
+    Args:
+        cores: List of (x, y, radius) tuples
+        row_tolerance_factor: Factor for grouping cores into rows (0.5 means cores within 
+                             0.5 * average_radius of each other are considered same row)
+    
+    Returns:
+        List of cores sorted row-wise
+    """
+    if not cores:
+        return cores
+    
+    cores_with_index = [(i, x, y, r) for i, (x, y, r) in enumerate(cores)]
+    
+    # Calculate average radius for row tolerance
+    avg_radius = np.mean([r for _, _, _, r in cores_with_index])
+    row_tolerance = avg_radius * row_tolerance_factor
+    
+    cores_with_index.sort(key=lambda core: core[2])  # Sort by y
+    
+    rows = []
+    current_row = [cores_with_index[0]]
+    
+    for core in cores_with_index[1:]:
+        if abs(core[2] - current_row[0][2]) <= row_tolerance:
+            current_row.append(core)
+        else:
+            rows.append(current_row)
+            current_row = [core]    
+    if current_row:
+        rows.append(current_row)
+    
+    sorted_cores = []
+    for row in rows:
+        row.sort(key=lambda core: core[1])  # Sort by x within each row
+        sorted_cores.extend(row)
+    
+    # Return just the (x, y, r) tuples in the new order
+    return [(x, y, r) for _, x, y, r in sorted_cores]
+
+
 def create_simple_overlay(image, cores, mask=None):
     """Create simple detection overlay using binary mask regions
     
@@ -23,18 +66,29 @@ def create_simple_overlay(image, cores, mask=None):
     
     if mask is not None:
         # Create composite colored mask overlay
-        # Generate different colors for each core
+        # Map sorted cores to their corresponding mask regions
         unique_ids = np.unique(mask)[1:]  # Exclude background (0)
+        
+        # Create mapping from sorted cores to mask IDs
+        core_to_mask_id = {}
+        for i, (x, y, r) in enumerate(cores):
+            # Find which mask ID corresponds to this sorted core position
+            mask_x = min(int(x), mask.shape[1] - 1)
+            mask_y = min(int(y), mask.shape[0] - 1)
+            mask_id = mask[mask_y, mask_x]
+            if mask_id > 0:  # Valid mask region
+                core_to_mask_id[i] = mask_id
         
         # Create a single composite mask overlay to avoid progressive darkening
         composite_mask = np.zeros_like(overlay)
         
-        for i, mask_id in enumerate(unique_ids):
+        # Color each mask region using sorted core index for consistent coloring
+        for sorted_idx, mask_id in core_to_mask_id.items():
             # Create binary mask for this core
             core_mask = (mask == mask_id).astype(np.uint8)
             
-            # Generate a unique color for this core (use more vibrant colors)
-            hue = int((i * 360) / len(unique_ids))  # Full hue range
+            # Generate a unique color for this core (use sorted index for consistency)
+            hue = int((sorted_idx * 360) / len(cores))  # Full hue range
             color_hsv = np.array([[[hue % 180, 255, 255]]], dtype=np.uint8)  # Full saturation and value
             color_bgr = cv2.cvtColor(color_hsv, cv2.COLOR_HSV2BGR)[0, 0]
             color = (int(color_bgr[0]), int(color_bgr[1]), int(color_bgr[2]))
@@ -50,8 +104,8 @@ def create_simple_overlay(image, cores, mask=None):
         # Apply composite mask to overlay ONCE to avoid progressive darkening
         overlay = cv2.addWeighted(overlay, 0.8, composite_mask, 0.2, 0)
         
-        # Add labels and center points
-        for i, mask_id in enumerate(unique_ids):
+        # Add labels and center points using sorted core order
+        for sorted_idx, mask_id in core_to_mask_id.items():
             core_mask = (mask == mask_id).astype(np.uint8)
             
             # Find center for label placement
@@ -63,8 +117,8 @@ def create_simple_overlay(image, cores, mask=None):
                 # Draw center point
                 cv2.circle(overlay, (cx, cy), 3, (255, 255, 255), -1)
                 
-                # Put label with black outline for better visibility
-                label = f"{i + 1}"
+                # Put label with row-wise numbering (sorted_idx + 1)
+                label = f"{sorted_idx + 1}"
                 # Black outline
                 cv2.putText(overlay, label, (cx - 10, cy + 10), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 4)
@@ -240,6 +294,67 @@ def crop_cores_with_masks(image, mask, cores, output_dir, padding_factor=1.2, sc
                 'crop_bounds': (x1, y1, x2, y2),
                 'crop_size': image_crop.shape,
                 'mask_id': int(core_mask_id)
+            }
+            
+            cropped_info.append(crop_info)
+            
+        except Exception as e:
+            print(f"Failed to crop core {i+1}: {e}")
+            continue
+    
+    return cropped_info 
+    
+def crop_cores_raw(image, cores, output_dir, padding_factor=1.2, scale_factor=1.0):
+    """Crop cores without applying any masking - just raw square crops
+    
+    Args:
+        image: Original image (grayscale or color)
+        cores: List of (x, y, radius) tuples (in processed image coordinates)
+        output_dir: Directory to save crops
+        padding_factor: Padding around each core (default 1.2)
+        scale_factor: Factor to scale coordinates from processed to original image
+        
+    Returns:
+        List of crop information dictionaries
+    """
+    cropped_info = []
+    
+    for i, (x, y, r) in enumerate(cores):
+        try:
+            # Scale coordinates to original image if needed
+            orig_x = int(x * scale_factor)
+            orig_y = int(y * scale_factor) 
+            orig_r = int(r * scale_factor)
+            
+            # Calculate square crop boundaries with padding
+            crop_r = int(orig_r * padding_factor)
+            x1 = max(0, orig_x - crop_r)
+            y1 = max(0, orig_y - crop_r)
+            x2 = min(image.shape[1], orig_x + crop_r)
+            y2 = min(image.shape[0], orig_y + crop_r)
+            
+            # Extract raw image crop without any masking
+            raw_crop = image[y1:y2, x1:x2]
+            
+            # Save raw crop
+            crop_filename = f"core_{i+1:02d}_raw.png"
+            crop_path = os.path.join(output_dir, crop_filename)
+            
+            # Ensure proper data type for saving
+            if raw_crop.dtype != np.uint8:
+                crop_normalized = cv2.normalize(raw_crop, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+            else:
+                crop_normalized = raw_crop
+                
+            cv2.imwrite(crop_path, crop_normalized)
+            
+            crop_info = {
+                'core_id': i + 1,
+                'filename': crop_filename,
+                'center_original': (orig_x, orig_y),
+                'radius_original': orig_r,
+                'crop_bounds': (x1, y1, x2, y2),
+                'crop_size': raw_crop.shape
             }
             
             cropped_info.append(crop_info)

@@ -1,9 +1,16 @@
-# Core dependencies for Cellpose-SAM tissue core segmentation
-torch
+# INSTALLATION INSTRUCTIONS:
+# 1. Create conda environment: conda create -n cellSAM_env python=3.9 -y
+# 2. Activate environment: conda activate cellSAM_env  
+# 3. Install conda packages: conda install -c conda-forge numpy scipy scikit-image opencv tifffile typer -y
+# 4. Install pip packages: pip install -r requirements.txt
+#
+# Packages to install via pip 
 cellpose>=4.0
-opencv-python>=4.5.0
-numpy>=1.21.0
-scikit-image>=0.18.0
-tifffile>=2021.7.2
-typer>=0.9.0
-scipy>=1.7.0
+
+# Packages to install via conda-forge (DO NOT pip install these):
+#numpy>=1.21.0,<2.1.0 
+#scipy>=1.7.0          
+#scikit-image>=0.18.0 
+#opencv>=4.5.0         
+#tifffile>=2021.7.2    
+#typer>=0.9.0          

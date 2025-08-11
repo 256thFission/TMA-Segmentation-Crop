@@ -13,7 +13,7 @@ from typing import Optional
 
 from preprocessor import ImagePreprocessor
 from cellpose_detector import CellposeSAMDetector
-from visualize import create_simple_overlay, crop_cores_simple, crop_cores_with_masks
+from visualize import create_simple_overlay, crop_cores_simple, crop_cores_with_masks, crop_cores_raw, sort_cores_rowwise
 
 # GPU detection
 try:
@@ -33,6 +33,7 @@ def main(
     flow_threshold: float = typer.Option(0.6, help="Cellpose flow threshold - increase to reduce false positives"),
     cellprob_threshold: float = typer.Option(0.3, help="Cellpose cell probability threshold - increase to reduce noise detections"),
     flat_field: bool = typer.Option(True, help="Enable flat field correction (illumination normalization)"),
+    skip_masking: bool = typer.Option(False, "--skip-masking", help="Skip masking step and export raw cropped images only"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging for debugging.")
 ):
     """Simplified main execution pipeline"""
@@ -53,6 +54,7 @@ def main(
         print(f"Radius filter: {min_radius_pct}% - {max_radius_pct}% of image width")
         print(f"Cellpose params: flow_threshold={flow_threshold}, cellprob_threshold={cellprob_threshold}")
         print(f"Flat field correction: {'on' if flat_field else 'off'}")
+        print(f"Skip masking: {'on' if skip_masking else 'off'}")
         print(f"GPU available: {GPU_AVAILABLE}")
         print(f"Using GPU: {use_gpu} ({gpu_reason})")
         print("---------------------")
@@ -86,7 +88,6 @@ def main(
         detector = CellposeSAMDetector(use_gpu=use_gpu)
         print("Done.")
 
-        # Process image
         print(f"[2/5] Loading and preprocessing image...", end="")
         original_image, processed_image, scale_factor = preprocessor.process(input_path)
         if processed_image is None:
@@ -96,7 +97,6 @@ def main(
         if verbose:
             print(f"      Original shape: {original_image.shape}, Processed shape: {processed_image.shape}")
         
-        # Detect cores
         print(f"[3/5] Detecting tissue cores...", end="")
         detected_cores, detection_mask = detector.detect_cores(
             processed_image,
@@ -122,9 +122,14 @@ def main(
             print(f"      Radius thresholds (pixels): {min_radius:.1f} - {max_radius:.1f}")
             print(f"      Cores after filtering: {len(filtered_cores)}")
         
+        # Sort cores in row-wise order (left-to-right, top-to-bottom)
+        sorted_cores = sort_cores_rowwise(filtered_cores)
+        if verbose:
+            print(f"\n      Cores reordered row-wise for intuitive numbering")
+        
         # Scale coordinates back to original image
         original_cores = []
-        for x, y, r in filtered_cores:
+        for x, y, r in sorted_cores:
             orig_x = int(x * scale_factor)
             orig_y = int(y * scale_factor)
             orig_r = int(r * scale_factor)
@@ -134,22 +139,27 @@ def main(
 
         # Save artifacts
         print(f"[5/5] Saving results...", end="")
-        overlay_image = create_simple_overlay(processed_image, filtered_cores, mask=detection_mask)
+        overlay_image = create_simple_overlay(processed_image, sorted_cores, mask=detection_mask)
         overlay_path = os.path.join(output, "detection_overlay.png")
         cv2.imwrite(overlay_path, overlay_image)
 
-        # Create filtered crops (background removed) - saves masks directly to masks_dir
-        cropped_filtered_info = crop_cores_with_masks(
-            original_image, detection_mask, filtered_cores, crops_filtered_dir,
-            padding_factor=1.2, scale_factor=scale_factor, masks_dir=masks_dir
-        )
-        
-        # Skip raw crops to avoid redundant full-res processing
-        # Raw crops would be created by crop_cores_simple() but that duplicates 
-        # the expensive full-resolution image processing
-        
-        # Use filtered info for the report
-        cropped_info = cropped_filtered_info
+        # Choose cropping method based on skip_masking flag
+        if skip_masking:
+            # Create raw crops without any masking
+            cropped_info = crop_cores_raw(
+                original_image, sorted_cores, crops_filtered_dir,
+                padding_factor=1.2, scale_factor=scale_factor
+            )
+            if verbose:
+                print(f"\n      Created {len(cropped_info)} raw crops (no masking)")
+        else:
+            # Create filtered crops (background removed) - saves masks directly to masks_dir
+            cropped_info = crop_cores_with_masks(
+                original_image, detection_mask, sorted_cores, crops_filtered_dir,
+                padding_factor=1.2, scale_factor=scale_factor, masks_dir=masks_dir
+            )
+            if verbose:
+                print(f"\n      Created {len(cropped_info)} masked crops with segmentation masks")
         print("Done.")
 
         # Generate report
@@ -170,7 +180,8 @@ def main(
             'overlay_image': overlay_path,
             'cores_filtered_directory': crops_filtered_dir,
             'cores_raw_directory': crops_raw_dir,
-            'masks_directory': masks_dir
+            'masks_directory': masks_dir,
+            'crop_mapping': cropped_info  # Add crop mapping data for centroid assignment
         }
         
         report_path = os.path.join(output, 'detection_report.json')
