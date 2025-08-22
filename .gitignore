@@ -8,3 +8,34 @@ IEEEC
 *.pyc
 *.png
 *.tsv
+
+# Python caches
+__pycache__/
+.ipynb_checkpoints/
+
+# Apptainer/Singularity images and build cache
+*.sif
+.singularity/
+.apptainer/
+
+# Local installers and bootstrap scripts
+Miniconda3-*.sh
+
+# Pipeline outputs and large artifacts (keep out of git)
+fullres/
+hires/
+hires_bg/
+results/
+
+# OS/editor noise
+.DS_Store
+.vscode/settings.json
+
+# Optional virtualenvs
+.env/
+.conda/
+
+# Logs and temp
+*.log
+*.tmp
+tmp/

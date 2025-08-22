@@ -143,23 +143,42 @@ def main(
         overlay_path = os.path.join(output, "detection_overlay.png")
         cv2.imwrite(overlay_path, overlay_image)
 
+        # Always generate masks first (for downstream processing like divide_tsv_by_masks.py)
+        # Use a temporary directory for crops since we only want the masks
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp_dir:
+            mask_info = crop_cores_with_masks(
+                original_image, detection_mask, sorted_cores, temp_dir,
+                padding_factor=1.2, scale_factor=scale_factor, masks_dir=masks_dir
+            )
+        if verbose:
+            print(f"\n      Generated {len(mask_info)} masks in masks/")
+        
         # Choose cropping method based on skip_masking flag
         if skip_masking:
-            # Create raw crops without any masking
+            # Skip masking: put raw crops in cores_filtered/ (downstream expects filtered crops here)
             cropped_info = crop_cores_raw(
                 original_image, sorted_cores, crops_filtered_dir,
                 padding_factor=1.2, scale_factor=scale_factor
             )
             if verbose:
-                print(f"\n      Created {len(cropped_info)} raw crops (no masking)")
+                print(f"      Skip masking enabled: raw crops saved to cores_filtered/ (masks still generated)")
         else:
-            # Create filtered crops (background removed) - saves masks directly to masks_dir
+            # Normal masking: use masks to filter cores_filtered/
             cropped_info = crop_cores_with_masks(
                 original_image, detection_mask, sorted_cores, crops_filtered_dir,
-                padding_factor=1.2, scale_factor=scale_factor, masks_dir=masks_dir
+                padding_factor=1.2, scale_factor=scale_factor, masks_dir=None  # Don't re-save masks
             )
             if verbose:
-                print(f"\n      Created {len(cropped_info)} masked crops with segmentation masks")
+                print(f"      Created {len(cropped_info)} masked crops in cores_filtered/")
+        
+        # Always create raw crops for reference
+        raw_cropped_info = crop_cores_raw(
+            original_image, sorted_cores, crops_raw_dir,
+            padding_factor=1.2, scale_factor=scale_factor
+        )
+        if verbose:
+            print(f"      Created {len(raw_cropped_info)} raw crops in cores_raw/ for reference")
         print("Done.")
 
         # Generate report
@@ -176,6 +195,7 @@ def main(
             'expected_cores': expected_cores if expected_cores is not None else 'N/A',
             'detection_rate': f"{detection_rate:.1f}%" if detection_rate is not None else 'N/A',
             'individual_cores_cropped': len(cropped_info),
+            'masks_generated': len(mask_info),
             'output_directory': output,
             'overlay_image': overlay_path,
             'cores_filtered_directory': crops_filtered_dir,

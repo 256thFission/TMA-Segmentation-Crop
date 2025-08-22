@@ -1,0 +1,181 @@
+Bootstrap: docker
+From: ubuntu:noble
+
+%environment
+    export LC_ALL=C
+    export PYTHONPATH=$PYTHONPATH:/workspace
+    export PYTHONUNBUFFERED=1
+    export PYTHONDONTWRITEBYTECODE=1
+    export LD_LIBRARY_PATH=/usr/local/lib
+    export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
+
+%post
+    # Set non-interactive mode
+    export DEBIAN_FRONTEND=noninteractive
+
+    # Install dependencies
+    apt-get update && apt-get install -y \
+        build-essential \
+        software-properties-common \
+        ninja-build \
+        python3-pip \
+        bc \
+        wget \
+        ca-certificates \
+        git-all \
+        cmake \
+        libjxr-dev \
+        openjdk-11-jre \
+        python3-venv \
+        libglib2.0-dev \
+        glib-2.0-dev \
+        libexpat1-dev \
+        libexpat-dev \
+        librsvg2-2 \
+        librsvg2-common \
+        librsvg2-dev \
+        libpng-dev \
+        libjpeg-turbo8-dev \
+        libopenjp2-7-dev \
+        libtiff-dev \
+        libexif-dev \
+        liblcms2-dev \
+        libheif-dev \
+        liborc-dev \
+        libgirepository1.0-dev \
+        libopenslide-dev
+
+    # Update CA certificates
+    update-ca-certificates
+
+    # Create Python virtual environment
+    python3 -m venv ~/.local
+    source ~/.local/bin/activate
+
+    # Install Meson
+    ~/.local/bin/pip3 install meson
+
+    # Install libvips from source
+    wget https://github.com/libvips/libvips/releases/download/v8.15.2/vips-8.15.2.tar.xz --no-check-certificate
+    tar xf vips-8.15.2.tar.xz
+    cd vips-8.15.2
+    ~/.local/bin/meson build --buildtype=release --libdir=lib
+    cd build
+    ninja
+    ninja install
+    cd ..
+    rm -rf vips-8.15.2 vips-8.15.2.tar.xz
+
+    # Install Python packages for VALIS
+    ~/.local/bin/pip3 install --upgrade pip
+    ~/.local/bin/pip3 install "poetry>=1.6.1"
+    ~/.local/bin/poetry config virtualenvs.in-project true
+    ~/.local/bin/poetry add scikit-image==0.24.0
+    ~/.local/bin/poetry add opencv-contrib-python-headless==4.9.0.80
+    ~/.local/bin/poetry remove torch
+    ~/.local/bin/poetry lock
+    ~/.local/bin/poetry install --only main
+
+    # Install PyTorch
+    /usr/local/src/.venv/bin/pip install --no-cache-dir torch==2.2.0 --index-url https://download.pytorch.org/whl/cpu
+
+    # Install cellSAM dependencies
+    # Note: Using pip for all since we're in a container environment
+    /usr/local/src/.venv/bin/pip install --no-cache-dir \
+        "numpy>=1.21.0,<2.1.0" \
+        "scipy>=1.7.0" \
+        "tifffile>=2021.7.2" \
+        "typer>=0.9.0" \
+        "cellpose>=4.0"
+
+    # Install bioformats.jar
+    wget https://downloads.openmicroscopy.org/bio-formats/7.0.0/artifacts/bioformats_package.jar -P valis
+
+    # Install Jupyter Lab and additional analysis dependencies
+    /usr/local/src/.venv/bin/pip install --no-cache-dir \
+        jupyter \
+        jupyterlab \
+        ipywidgets \
+        matplotlib \
+        seaborn \
+        pandas \
+        scikit-learn \
+        ipykernel
+
+    # Register Python kernel
+    /usr/local/src/.venv/bin/python -m ipykernel install --name="python3" --display-name="Python 3" --user
+
+    # Create workspace directory
+    mkdir -p /workspace
+    chmod -R 777 /workspace
+
+    # Create a simple activation script for the virtual environment
+    echo '#!/bin/bash' > /usr/local/bin/activate_env
+    echo 'source /usr/local/src/.venv/bin/activate' >> /usr/local/bin/activate_env
+    echo 'exec "$@"' >> /usr/local/bin/activate_env
+    chmod +x /usr/local/bin/activate_env
+
+    # Clean up
+    apt-get remove -y wget build-essential ninja-build && \
+    apt-get autoremove -y && \
+    apt-get autoclean && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+%files
+    valis valis
+    pyproject.toml pyproject.toml
+    README.rst README.rst
+    LICENSE.txt LICENSE.txt
+    CITATION.cff CITATION.cff
+
+%runscript
+    echo "VALIS-WSI + cellSAM Container"
+    echo "Available commands:"
+    echo "  - For Jupyter Lab: singularity run container.sif jupyter"
+    echo "  - For interactive shell: singularity shell container.sif"
+    echo "  - For specific commands: singularity exec container.sif <command>"
+    echo ""
+    echo "Arguments received: $*"
+    
+    # If no arguments or 'jupyter' is specified, start Jupyter Lab
+    if [ $# -eq 0 ] || [ "$1" = "jupyter" ]; then
+        source /usr/local/src/.venv/bin/activate
+        exec jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --notebook-dir=/workspace --NotebookApp.token='' --NotebookApp.password=''
+    else
+        # Otherwise, execute the provided command with the virtual environment activated
+        source /usr/local/src/.venv/bin/activate
+        exec "$@"
+    fi
+
+%startscript
+    source /usr/local/src/.venv/bin/activate
+    jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --notebook-dir=/workspace --NotebookApp.token='' --NotebookApp.password=''
+
+%help
+    This container provides both VALIS-WSI and cellSAM environments with Jupyter Lab support.
+
+    Usage Options:
+    
+    1. Start Jupyter Lab as an instance:
+       $ singularity instance start --bind /your/data:/workspace container.sif valis-jupyter
+       $ singularity exec instance://valis-jupyter jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root
+
+    2. Run Jupyter Lab directly:
+       $ singularity run --writable-tmpfs --bind /your/data:/workspace container.sif
+       $ singularity run --writable-tmpfs --bind /your/data:/workspace container.sif jupyter
+
+    3. Interactive shell (NO Jupyter Lab):
+       $ singularity shell --writable-tmpfs --bind /your/data:/workspace container.sif
+
+    4. Execute specific commands:
+       $ singularity exec --writable-tmpfs --bind /your/data:/workspace container.sif python your_script.py
+       $ singularity exec --writable-tmpfs --bind /your/data:/workspace container.sif cellpose --help
+
+    5. Run cellSAM CLI commands:
+       $ singularity exec --writable-tmpfs --bind /your/data:/workspace container.sif python -m cellSAM <arguments>
+
+%labels
+    Author Your Name
+    Version v0.2.0
+    Description VALIS-WSI + cellSAM with Jupyter Lab support

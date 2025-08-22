@@ -1,0 +1,48 @@
+name: cellSAM_valis_env
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  # Python version (Valis requires 3.9 or 3.10)
+  - python=3.9
+  
+  # System-level dependencies for Valis
+  - openjdk=11  # Java JDK/JRE for Bioformats
+  - libvips>=8.11  # Image processing library
+  - openslide  # Slide reading library
+  - maven  # Required for Bioformats
+  
+  # Core scientific computing (existing requirements)
+  - numpy>=1.21.0,<2.1.0
+  - scipy>=1.7.0
+  - scikit-image>=0.18.0
+  - opencv>=4.5.0
+  - tifffile>=2021.7.2
+  - typer>=0.9.0
+  
+  # Additional packages for image processing compatibility
+  - pillow
+  - matplotlib
+  - pandas
+  - seaborn
+  - scikit-learn
+  
+  # Jupyter ecosystem for notebook support
+  - jupyter
+  - jupyterlab
+  - ipywidgets
+  - ipykernel
+  
+  # Build tools
+  - cmake
+  - pkg-config
+  
+  # Pip dependencies that cannot be installed via conda
+  - pip
+  - pip:
+    - cellpose>=4.0
+    - valis-wsi  # Main Valis package
+    - torch==2.2.0 --index-url https://download.pytorch.org/whl/cpu
+    - pyvips  # Python bindings for libvips
+    - jpype1  # Java-Python bridge for Bioformats

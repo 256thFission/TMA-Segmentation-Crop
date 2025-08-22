@@ -34,7 +34,7 @@ pip install -r requirements.txt
 python simple_main.py --input your_image.tif --output results
 
 
-!!! Note, you'll most likely have to adjust the downsampling factor. ~16 works well for the thumbnail stain images, and the default works bettetr for the ~ 30k pixel image.
+!!! Note, you'll most likely have to adjust the downsampling factor. ~8 works well for the thumbnail stain images, and the default works bettetr for the ~ 30k pixel image.
 
 ```
 
@@ -60,15 +60,6 @@ python simple_main.py --input tissue_sample.tif --output results --expected-core
 
 
 ## Processing Pipeline
-
-### Image Preprocessing (`preprocessor.py`)
-
-
-1. **Image Loading** - Multi-format support with automatic dimension handling
-2. **Flat Field Correction** - Illumination normalization using Gaussian and polynomial models
-3. **Downsampling** - Adaptive scaling for processing efficiency
-4. **Contrast Enhancement** - CLAHE-based local contrast improvement
-5. **Noise Reduction** - Median filtering to remove artifacts
 
 Raw Image → Format Conversion → Flat Field Correction → Downsampling → 
 Contrast Enhancement → Noise Reduction → Processed Image

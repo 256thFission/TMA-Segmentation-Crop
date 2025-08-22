@@ -38,18 +38,22 @@ def load_crop_mapping_and_masks(pipeline_output_dir):
     for crop_info in report['crop_mapping']:
         core_id = crop_info['core_id']
         x1, y1, x2, y2 = crop_info['crop_bounds']
-        mask_path = os.path.join(pipeline_output_dir, 'masks', crop_info['mask_filename'])
-        
-        # Load mask image once
+        # Some runs (e.g., when --skip-masking is used) won't have mask files.
+        # In that case, fall back to bounds-only assignment by leaving mask=None.
         mask = None
-        if os.path.exists(mask_path):
-            mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-            if mask is not None:
-                print(f"  Loaded mask for core {core_id:02d}: {mask.shape}")
+        if 'mask_filename' in crop_info:
+            mask_path = os.path.join(pipeline_output_dir, 'masks', crop_info['mask_filename'])
+            # Load mask image once
+            if os.path.exists(mask_path):
+                mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+                if mask is not None:
+                    print(f"  Loaded mask for core {core_id:02d}: {mask.shape}")
+                else:
+                    print(f"  Warning: Could not load mask: {mask_path}")
             else:
-                print(f"  Warning: Could not load mask: {mask_path}")
+                print(f"  Warning: Mask file not found: {mask_path}")
         else:
-            print(f"  Warning: Mask file not found: {mask_path}")
+            print(f"  Note: No 'mask_filename' in report for core {core_id:02d}; using bounds-only assignment.")
         
         crop_mapping[core_id] = {
             'bounds': (x1, y1, x2, y2),
@@ -79,6 +83,9 @@ def find_core_for_centroid(x_pixel, y_pixel, crop_mapping):
                     0 <= crop_x < mask.shape[1]):
                     if mask[crop_y, crop_x] == 255:  # White pixels in mask
                         return core_id
+            else:
+                # No mask available (e.g., pipeline run with --skip-masking). Use bounds-only.
+                return core_id
     
     return None  # Centroid not found in any mask
 
