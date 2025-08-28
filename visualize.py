@@ -199,7 +199,7 @@ def crop_cores_simple(image, cores, output_dir, padding_factor=1.2):
     return cropped_info
 
 
-def crop_cores_with_masks(image, mask, cores, output_dir, padding_factor=1.2, scale_factor=1.0, masks_dir=None):
+def crop_cores_with_masks(image, mask, cores, output_dir, padding_factor=1.2, scale_factor=1.0, masks_dir=None, core_names=None):
     """Crop cores and save both image and binary mask for each core
     
     Args:
@@ -265,8 +265,17 @@ def crop_cores_with_masks(image, mask, cores, output_dir, padding_factor=1.2, sc
             else:  # Grayscale image
                 filtered_image_crop = image_crop * mask_crop
             
+            # Generate filenames using canonical name if provided
+            if core_names and i < len(core_names):
+                core_name = core_names[i]
+                image_filename = f"{core_name}.png"
+                mask_filename = f"{core_name}_mask.png"
+            else:
+                core_name = f"core_{i+1:02d}"
+                image_filename = f"core_{i+1:02d}.png"
+                mask_filename = f"core_{i+1:02d}_mask.png"
+            
             # Save filtered image crop (with mask applied)
-            image_filename = f"core_{i+1:02d}_image.png"
             image_path = os.path.join(output_dir, image_filename)
             
             # Ensure proper data type for saving
@@ -278,7 +287,6 @@ def crop_cores_with_masks(image, mask, cores, output_dir, padding_factor=1.2, sc
             cv2.imwrite(image_path, image_normalized)
             
             # Save binary mask crop (convert to 255 for visibility)
-            mask_filename = f"core_{i+1:02d}_mask.png"
             # Use masks_dir if provided, otherwise fall back to output_dir
             mask_save_dir = masks_dir if masks_dir is not None else output_dir
             mask_path = os.path.join(mask_save_dir, mask_filename)
@@ -286,7 +294,7 @@ def crop_cores_with_masks(image, mask, cores, output_dir, padding_factor=1.2, sc
             cv2.imwrite(mask_path, mask_crop_255)
             
             crop_info = {
-                'core_id': i + 1,
+                'core_id': core_name,
                 'image_filename': image_filename,
                 'mask_filename': mask_filename,
                 'center_original': (orig_x, orig_y),
@@ -304,7 +312,7 @@ def crop_cores_with_masks(image, mask, cores, output_dir, padding_factor=1.2, sc
     
     return cropped_info 
     
-def crop_cores_raw(image, cores, output_dir, padding_factor=1.2, scale_factor=1.0):
+def crop_cores_raw(image, cores, output_dir, padding_factor=1.2, scale_factor=1.0, core_names=None):
     """Crop cores without applying any masking - just raw square crops
     
     Args:
@@ -313,6 +321,7 @@ def crop_cores_raw(image, cores, output_dir, padding_factor=1.2, scale_factor=1.
         output_dir: Directory to save crops
         padding_factor: Padding around each core (default 1.2)
         scale_factor: Factor to scale coordinates from processed to original image
+        core_names: List of canonical core names (optional, defaults to core_01, core_02, etc.)
         
     Returns:
         List of crop information dictionaries
@@ -336,8 +345,14 @@ def crop_cores_raw(image, cores, output_dir, padding_factor=1.2, scale_factor=1.
             # Extract raw image crop without any masking
             raw_crop = image[y1:y2, x1:x2]
             
-            # Save raw crop
-            crop_filename = f"core_{i+1:02d}_raw.png"
+            # Generate filename using canonical name if provided
+            if core_names and i < len(core_names):
+                core_name = core_names[i]
+                crop_filename = f"{core_name}.png"
+            else:
+                crop_filename = f"core_{i+1:02d}.png"
+                core_name = f"core_{i+1:02d}"
+                
             crop_path = os.path.join(output_dir, crop_filename)
             
             # Ensure proper data type for saving
@@ -349,7 +364,7 @@ def crop_cores_raw(image, cores, output_dir, padding_factor=1.2, scale_factor=1.
             cv2.imwrite(crop_path, crop_normalized)
             
             crop_info = {
-                'core_id': i + 1,
+                'core_id': core_name,
                 'filename': crop_filename,
                 'center_original': (orig_x, orig_y),
                 'radius_original': orig_r,

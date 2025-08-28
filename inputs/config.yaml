@@ -1,0 +1,96 @@
+# Unified Tissue Core Alignment Pipeline Configuration
+
+# Input files and paths
+inputs:
+  # NOTE: Paths are resolved relative to this config file's directory.
+  # For container mode with --bind $PWD:/workspace and --config /workspace/inputs/config.yaml,
+  # these will resolve to /workspace/inputs/<filename>.
+  dapi_image: "tissue_dapi_fullres.tif"
+  stain_image: "tissue_hires_image.png"
+  pcf_csv: "rko4_pcf.csv"
+  visium_csv: "rko4_visium.csv"
+  centroids_tsv: "rko4_cellseg.tsv"
+
+# Output directories
+outputs:
+  # Place outputs at project root relative to this config under inputs/
+  base_dir: "../fullres2"
+  valis_workdir: "../valis_work"
+  final_output: "../outputs/rko4_cellseg_transformed.tsv"
+
+# Global settings
+global:
+  microns_per_pixel: 0.5072  # Default µm/px conversion
+  cores_per_row: 4  # Expected cores per row for grid layout
+  expected_cores: 20  # Based on DAPI command (stain shows 9, but using max expected)
+  flip_axis: "y"  # Vertical flip for DAPI preprocessing
+  verbose: true
+
+# Tissue core segmentation parameters (modality-specific)
+segmentation:
+  # DAPI-specific settings
+  dapi:
+    downsample_factor: 128  # From scratch command: --downsample 128
+    expected_cores: 20      # From scratch command: --expected-cores 20
+    min_radius_pct: 1.0
+    max_radius_pct: 30.0
+    cellpose:
+      flow_threshold: 0.6
+      cellprob_threshold: 0.3
+      use_gpu: true
+    preprocessing:
+      enhance_contrast: true
+      flat_field_correction: true
+    cropping:
+      padding_factor: 1.2
+      skip_masking: true    # From --skip-masking flag
+  
+  # Stain-specific settings  
+  stain:
+    downsample_factor: 6    # From scratch command: --downsample 6
+    expected_cores: 9       # From scratch command: --expected-cores 9
+    min_radius_pct: 1.0
+    max_radius_pct: 30.0
+    cellpose:
+      flow_threshold: 0.6
+      cellprob_threshold: 0.3
+      use_gpu: true
+    preprocessing:
+      enhance_contrast: true
+      flat_field_correction: true
+    cropping:
+      padding_factor: 1.2
+      skip_masking: true    # From --skip-masking flag
+
+# VALIS registration parameters
+valis:
+  # Image preprocessing for VALIS
+  preprocessing:
+    scale_factor: 0.1022  # DAPI downsampling for registration
+  
+  # SuperGlue configuration
+  superglue:
+    weights: "indoor"  # or "outdoor"
+    keypoint_threshold: 0.005
+    match_threshold: 0.2
+    force_cpu: false
+  
+  # Registration controls
+  registration:
+    timeout_s: null  # No timeout by default
+    heartbeat_s: 30
+    retry_on_timeout_cpu: true
+  
+  # Output options
+  save_overlays: true
+  overlay_alpha: 0.5
+  per_core_artifacts: false  # Enable to save per-core intermediate files
+
+# Coordinate transformation
+coordinates:
+  # TSV column names for centroids
+  x_column: "Centroid X µm"
+  y_column: "Centroid Y µm"
+  
+  # Core ID mapping from CSV grids
+  enforce_canonical_ids: true

@@ -6,6 +6,10 @@
 #
 # Packages to install via pip 
 cellpose>=4.0
+pyyaml>=6.0          # For unified pipeline YAML configuration
+rich>=13.0           # For enhanced CLI output and progress bars
+pandas>=1.3.0        # For centroid data manipulation
+valis>=1.0.0         # For tissue core registration
 
 # Packages to install via conda-forge (DO NOT pip install these):
 #numpy>=1.21.0,<2.1.0 

@@ -1,0 +1,189 @@
+Bootstrap: docker
+From: nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+%environment
+    export LC_ALL=C
+    export PYTHONPATH=$PYTHONPATH:/workspace
+    export PYTHONUNBUFFERED=1
+    export PYTHONDONTWRITEBYTECODE=1
+    export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+    export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
+
+    # Activate virtual environment by default
+    export PATH="/opt/venv/bin:$PATH"
+    export VIRTUAL_ENV="/opt/venv"
+
+    # Java setup for Valis/Bioformats
+    export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+    export PATH="$JAVA_HOME/bin:$PATH"
+
+    # Bioformats jar location
+    export BIOFORMATS_JAR=/opt/bioformats/bioformats_package.jar
+
+%post
+    # Set non-interactive mode
+    export DEBIAN_FRONTEND=noninteractive
+
+    # Install system dependencies (Valis requirements + additional)
+    apt-get update && apt-get install -y \
+        build-essential \
+        software-properties-common \
+        ninja-build \
+        python3-pip \
+        python3-dev \
+        bc \
+        wget \
+        ca-certificates \
+        git-all \
+        cmake \
+        pkg-config \
+        xz-utils \
+        libjxr-dev \
+        openjdk-11-jre \
+        openjdk-11-jdk \
+        python3-venv \
+        libglib2.0-dev \
+        glib-2.0-dev \
+        libexpat1-dev \
+        libexpat-dev \
+        librsvg2-2 \
+        librsvg2-common \
+        librsvg2-dev \
+        libpng-dev \
+        libjpeg-turbo8-dev \
+        libopenjp2-7-dev \
+        libtiff-dev \
+        libexif-dev \
+        liblcms2-dev \
+        libheif-dev \
+        liborc-dev \
+        libgirepository1.0-dev \
+        libopenslide-dev \
+        maven \
+        curl
+
+    # Update CA certificates
+    update-ca-certificates
+
+    # Set Java environment
+    export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+    echo "export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64" >> ~/.bashrc
+
+    # Create Python virtual environment
+    python3 -m venv /opt/venv
+    . /opt/venv/bin/activate
+
+    # Upgrade pip and install build tools
+    /opt/venv/bin/pip install --upgrade pip setuptools wheel
+
+    # Install Meson for libvips build
+    /opt/venv/bin/pip install meson
+
+    # Install libvips from source (required version for Valis)
+    cd /tmp
+    wget https://github.com/libvips/libvips/releases/download/v8.15.2/vips-8.15.2.tar.xz --no-check-certificate
+    tar xf vips-8.15.2.tar.xz
+    cd vips-8.15.2
+    /opt/venv/bin/meson build --buildtype=release --libdir=lib --prefix=/usr/local
+    cd build
+    ninja
+    ninja install
+    cd /tmp
+    rm -rf vips-8.15.2 vips-8.15.2.tar.xz
+
+    # Update library cache
+    ldconfig
+
+    # Core scientific Python packages (CPU libs are fine)
+    /opt/venv/bin/pip install --no-cache-dir \
+        "numpy>=1.21.0,<2.0" \
+        "scipy>=1.7.0" \
+        "scikit-image==0.24.0" \
+        "opencv-contrib-python-headless>=4.5.0" \
+        "tifffile>=2021.7.2" \
+        "typer>=0.9.0" \
+        pillow \
+        matplotlib \
+        pandas \
+        seaborn
+
+    # Install CUDA-enabled PyTorch (CUDA 12.1 build). If your cluster uses CUDA 11.8 drivers, switch to cu118.
+    /opt/venv/bin/pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
+        torch torchvision torchaudio
+
+    # Install cellpose for cell segmentation (uses torch automatically)
+    /opt/venv/bin/pip install --no-cache-dir "cellpose>=4.0"
+
+    # Valis dependencies
+    /opt/venv/bin/pip install --no-cache-dir \
+        pyvips \
+        jpype1 \
+        scikit-learn \
+        valis-wsi
+
+    # Jupyter ecosystem for interactive analysis (optional)
+    /opt/venv/bin/pip install --no-cache-dir \
+        jupyter \
+        jupyterlab \
+        ipywidgets \
+        ipykernel \
+        notebook
+
+    # Register Python kernel for Jupyter
+    /opt/venv/bin/python -m ipykernel install --name="unified-pipeline" --display-name="Unified Pipeline (cellSAM+Valis)" --sys-prefix
+
+    # Download bioformats.jar for Valis
+    mkdir -p /opt/bioformats
+    wget https://downloads.openmicroscopy.org/bio-formats/7.0.0/artifacts/bioformats_package.jar -O /opt/bioformats/bioformats_package.jar
+
+    # Create workspace and output directories
+    mkdir -p /workspace /data /results
+    chmod -R 777 /workspace /data /results
+
+    # Clean up
+    apt-get remove -y wget build-essential ninja-build && \
+    apt-get autoremove -y && \
+    apt-get autoclean && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+%runscript
+    echo "=== Unified Tissue Analysis Pipeline (GPU) ==="
+    echo "CUDA base image + PyTorch CUDA"
+    echo "Bioformats jar: $BIOFORMATS_JAR"
+    echo "Arguments received: $*"
+    exec "$@"
+
+%startscript
+    # Start Jupyter Lab by default
+    cd /workspace
+    jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root \
+        --notebook-dir=/workspace \
+        --NotebookApp.token='' \
+        --NotebookApp.password=''
+
+%help
+    GPU-enabled container for tissue analysis:
+    - Base: nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+    - CUDA-enabled PyTorch installed from cu121 wheels
+    - Cellpose uses GPU when available
+    - Valis + Bioformats + LibVips 8.15.2
+
+    Build (if fakeroot enabled):
+      apptainer build --fakeroot unified_pipeline_gpu.sif unified_pipeline_gpu.def
+
+    Build (remote):
+      apptainer build --remote unified_pipeline_gpu.sif unified_pipeline_gpu.def
+
+    Run with GPUs:
+      apptainer exec --nv --bind /your/data:/workspace unified_pipeline_gpu.sif python unified_pipeline.py --config inputs/config.yaml
+
+%labels
+    Author TataLab Pipeline
+    Version v1.0.0-gpu
+    Description Unified cellSAM + Valis tissue analysis pipeline (GPU)
+    Python 3.9
+    Cellpose 4.0+
+    Valis latest
+    LibVips 8.15.2
+    CUDA 12.1 + cuDNN
