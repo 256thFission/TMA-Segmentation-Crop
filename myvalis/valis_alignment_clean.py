@@ -11,13 +11,29 @@ import numpy as np
 import pandas as pd
 import cv2
 import torch
+import gc
 
 from valis import registration, feature_detectors, feature_matcher
 from skimage import transform
 from valis.feature_matcher import SuperGlueMatcher
 from valis.feature_detectors import SuperPointFD
 from valis.superglue_models.superpoint import SuperPoint as _VSuperPoint
-print(f"CUDA available: {torch.cuda.is_available()}")
+# Optional POSIX memory usage (Linux/macOS)
+try:
+    import resource  # type: ignore
+except Exception:
+    resource = None
+
+# Limit thread counts to reduce memory pressure
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+os.environ.setdefault("OPENCV_OPENCL_RUNTIME", "disabled")
+try:
+    cv2.setNumThreads(1)
+except Exception:
+    pass
 
 # =============================================================================
 # CONFIGURATION
@@ -57,6 +73,9 @@ class AlignmentConfig:
         # Overlay export options
         self.save_overlays = True
         self.overlay_alpha = 0.5  # alpha for blending overlays
+
+        # Internal: track any stain resize scaling applied before registration
+        self.stain_resize_scale = 1.0
 
 # =============================================================================
 # PREPROCESSING FUNCTIONS
@@ -154,7 +173,9 @@ def setup_valis_registration(src_dir, dst_dir, reference_name, superglue_config)
         crop="reference",
         create_masks=False,
         feature_detector_cls=None,  # Let VALIS choose, our patch will handle it
-        matcher=superglue_matcher
+        matcher=superglue_matcher,
+        max_image_dim_px=1024,
+        max_non_rigid_registration_dim_px=1024,
     )
     
     return reg
@@ -182,6 +203,10 @@ def run_registration(reg):
         return rigid_reg, nonrigid_reg, err_df
     except Exception as e:
         print(f"Registration failed: {e}")
+        try:
+            reg.close()
+        except Exception:
+            pass
         registration.kill_jvm()
         raise
 
@@ -328,6 +353,16 @@ _VSuperPoint.forward = _PATCHED_SP_FORWARD
 
 print("Applied SuperPointFD patches and SuperPoint.forward device co-location patch")
 
+def _rss_mb() -> float:
+    """Return resident set size (MB) or -1.0 if unavailable"""
+    if 'resource' not in globals() or resource is None:
+        return -1.0
+    try:
+        ru = resource.getrusage(resource.RUSAGE_SELF)
+        return float(ru.ru_maxrss) / 1024.0
+    except Exception:
+        return -1.0
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -442,6 +477,11 @@ def transform_centroids(centroids_tsv, transform_func, config, output_path):
     
     # Step 4: Transform to stain space using VALIS registration
     xy_stain = transform_func(xy_scaled.astype(np.int32))
+
+    # Map back to original stain crop pixel space if we resized stain before registration
+    scale_back = getattr(config, 'stain_resize_scale', 1.0)
+    if scale_back and scale_back != 1.0:
+        xy_stain = np.rint(xy_stain.astype(float) / float(scale_back)).astype(np.int32)
     
     # Add transformed coordinates to dataframe
     df['Stain_X_px'] = xy_stain[:, 0]
@@ -538,6 +578,18 @@ def run_alignment_pipeline(config=None, **kwargs):
         config.flip_axis, 
         dapi_processed_path
     )
+    # Free processed DAPI array from memory (it's written to disk)
+    try:
+        del processed_img
+    except Exception:
+        pass
+    gc.collect()
+    try:
+        mem1 = _rss_mb()
+        if mem1 >= 0:
+            print(f"[MEM] After DAPI preprocess: {mem1:.1f} MB")
+    except Exception:
+        pass
     
     # Store processed shape in config for coordinate transforms
     config.processed_dapi_shape = processed_shape
@@ -550,13 +602,44 @@ def run_alignment_pipeline(config=None, **kwargs):
     print("STEP 2: Preparing images for registration")
     print("=" * 60)
     
-    # Copy reference (stain) image
-    shutil.copy2(config.stain_path, src_dir / config.stain_path.name)
-    print(f"Copied stain image: {config.stain_path.name}")
-    
-    # Copy processed DAPI image
+    # Copy reference (stain) image but proactively downscale to avoid huge feature detection inputs
+    try:
+        stain_img = cv2.imread(str(config.stain_path))
+        if stain_img is None:
+            raise FileNotFoundError(f"Could not load stain image: {config.stain_path}")
+        h, w = stain_img.shape[:2]
+        # Target max dimension: match processed DAPI scale, capped at 1200 px
+        target_max = min(max(processed_shape), 1200)
+        if max(h, w) > target_max:
+            scale = target_max / float(max(h, w))
+            new_dim = (max(1, int(w * scale)), max(1, int(h * scale)))
+            stain_img = cv2.resize(stain_img, new_dim, interpolation=cv2.INTER_AREA)
+            config.stain_resize_scale = float(scale)
+        else:
+            config.stain_resize_scale = 1.0
+        cv2.imwrite(str(src_dir / config.stain_path.name), stain_img)
+        print(f"Copied stain image: {config.stain_path.name}")
+        # Free stain array
+        try:
+            del stain_img
+        except Exception:
+            pass
+        gc.collect()
+    except Exception as e:
+        # Fallback to simple copy if resize fails for any reason
+        shutil.copy2(config.stain_path, src_dir / config.stain_path.name)
+        print(f"Copied stain image (no resize due to error: {e}): {config.stain_path.name}")
+        config.stain_resize_scale = 1.0
+
+    # Copy processed DAPI image (already downscaled)
     shutil.copy2(dapi_processed_path, src_dir / dapi_processed_path.name)
     print(f"Copied processed DAPI image: {dapi_processed_path.name}")
+    try:
+        mem2 = _rss_mb()
+        if mem2 >= 0:
+            print(f"[MEM] After image copies: {mem2:.1f} MB")
+    except Exception:
+        pass
     
     # Step 3: Run VALIS registration
     print("\n" + "=" * 60)
@@ -570,7 +653,13 @@ def run_alignment_pipeline(config=None, **kwargs):
         config.superglue_config
     )
     
-    rigid_reg, nonrigid_reg, err_df = run_registration(reg)
+    _, _, err_df = run_registration(reg)
+    try:
+        mem_reg = _rss_mb()
+        if mem_reg >= 0:
+            print(f"[MEM] After registration: {mem_reg:.1f} MB")
+    except Exception:
+        pass
     
     # Save overlays (best-effort) - wrap in try/except to prevent crashes
     try:
@@ -599,23 +688,56 @@ def run_alignment_pipeline(config=None, **kwargs):
         config, 
         output_tsv
     )
+    # Keep transformed_df in results; avoid returning closures to prevent leaks
+    try:
+        stain_to_dapi = None
+        dapi_to_stain = None
+    except Exception:
+        pass
+    try:
+        mem_tr = _rss_mb()
+        if mem_tr >= 0:
+            print(f"[MEM] After centroid transform: {mem_tr:.1f} MB")
+    except Exception:
+        pass
     
     # Step 5: Cleanup
     print("\n" + "=" * 60)
     print("STEP 5: Cleanup")
     print("=" * 60)
     
+    # Attempt graceful VALIS shutdown
+    try:
+        reg.close()
+    except Exception:
+        pass
     registration.kill_jvm()
     print("JVM cleaned up successfully")
+    try:
+        if torch is not None and hasattr(torch, 'cuda') and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+    # Also drop reg to release Python-side references
+    try:
+        del reg
+    except Exception:
+        pass
+    gc.collect()
+    try:
+        mem_end = _rss_mb()
+        if mem_end >= 0:
+            print(f"[MEM] After cleanup: {mem_end:.1f} MB")
+    except Exception:
+        pass
     
-    # Return results
+    # Return results (full dataframes, but no transform closures)
     results = {
         'registration_error': err_df,
         'transformed_centroids': transformed_df,
         'output_tsv_path': output_tsv,
         'original_dapi_shape': original_shape,
         'processed_dapi_shape': processed_shape,
-        'transform_functions': (stain_to_dapi, dapi_to_stain)
     }
     
     print(f"\nPipeline completed successfully!")

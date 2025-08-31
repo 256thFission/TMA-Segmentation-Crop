@@ -8,6 +8,7 @@ IEEEC
 *.pyc
 *.png
 *.tsv
+*.json
 
 # Python caches
 __pycache__/

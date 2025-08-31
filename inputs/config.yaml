@@ -25,6 +25,7 @@ global:
   expected_cores: 20  # Based on DAPI command (stain shows 9, but using max expected)
   flip_axis: "y"  # Vertical flip for DAPI preprocessing
   verbose: true
+  max_cores: 19  
 
 # Tissue core segmentation parameters (modality-specific)
 segmentation:
@@ -77,7 +78,7 @@ valis:
   
   # Registration controls
   registration:
-    timeout_s: null  # No timeout by default
+    timeout_s: 900  # 15 minute timeout for debugging
     heartbeat_s: 30
     retry_on_timeout_cpu: true
   
