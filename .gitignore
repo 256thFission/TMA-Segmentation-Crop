@@ -9,6 +9,7 @@ IEEEC
 *.png
 *.tsv
 *.json
+*/valis_work/*
 
 # Python caches
 __pycache__/
