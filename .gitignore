@@ -9,6 +9,8 @@ IEEEC
 *.png
 *.tsv
 *.json
+*.tif
+command.txt
 */valis_work/*
 
 # Python caches
