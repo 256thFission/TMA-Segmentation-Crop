@@ -12,7 +12,8 @@ The goal of this pipeline is to align tissue cores between two whole-slide image
 2.  **Registration**: Aligns each DAPI core to its corresponding stain core using VALIS.
 3.  **Transformation**: Maps cell centroid coordinates from the DAPI image to the stain image's coordinate space.
 
-The primary inputs are the two WSIs and a TSV file with cell centroid data. The final output is a single TSV file containing the transformed coordinates, ready for downstream analysis.
+inputs -> fullres2/<modality>_processed (segment + masks + report) -> µm→px conversion + DAPI preprocess (scale+Y-flip) -> VALIS registration -> per-core transformed TSVs in valis_work/core_<ID>/ -> aggregate -> outputs/rkoX_cellseg_transformed.tsv
+
 
 ## Requirements
 

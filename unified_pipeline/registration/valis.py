@@ -46,6 +46,31 @@ class ValisEngine:
         # Ensure VALIS working directory exists
         self.valis_workdir.mkdir(parents=True, exist_ok=True)
     
+    def _core_exists_in_stain_grid(self, core_name: str, stain_grid: List[List[str]]) -> bool:
+        """Check if core name exists in stain grid"""
+        for row in stain_grid:
+            if core_name in row:
+                return True
+        return False
+    
+    def _extract_crop_bounds_from_report(self, report: dict, core_name: str) -> Optional[dict]:
+        """Extract crop bounds (x, y, width, height) for a given core from detection report"""
+        try:
+            crop_mapping = report.get('crop_mapping', [])
+            if isinstance(crop_mapping, list):
+                for entry in crop_mapping:
+                    if (entry.get('core_id') == core_name or 
+                        entry.get('image_filename') == f"{core_name}.png"):
+                        return {
+                            'x': entry.get('x', 0),
+                            'y': entry.get('y', 0), 
+                            'width': entry.get('width', 0),
+                            'height': entry.get('height', 0)
+                        }
+        except Exception as e:
+            self.utils.log(f"Failed to extract crop bounds for {core_name}: {e}", "debug")
+        return None
+    
     def run_per_core_valis(self, dapi_cores: List, stain_cores: List, preprocessed_centroids: pd.DataFrame,
                            dapi_report_path: str, stain_report_path: str,
                            dapi_grid: List[List[str]], stain_grid: List[List[str]]) -> List[Path]:
@@ -110,30 +135,39 @@ class ValisEngine:
             min_cores = min(min_cores, max_cores_cfg)
         self.utils.log(f"Processing {min_cores} core pairs (DAPI: {len(dapi_cores)}, Stain: {len(stain_cores)})")
         
-        for i in range(min_cores):
-            # Get canonical core names from grids
+        processed_count = 0
+        for i in range(len(dapi_cores)):
+            # Get DAPI core name (processing in row-wise order)
             dapi_core_name = self.utils.get_canonical_core_name(i, dapi_grid)
-            stain_core_name = self.utils.get_canonical_core_name(i, stain_grid)
             
-            self.utils.log(f"Processing core pair {i+1}/{min_cores}: DAPI={dapi_core_name}, Stain={stain_core_name}")
+            # Only process if matching stain core exists
+            if not self._core_exists_in_stain_grid(dapi_core_name, stain_grid):
+                self.utils.log(f"DAPI core {dapi_core_name} has no matching stain core, skipping")
+                continue
             
-            # Create per-core working directory using DAPI name (primary reference)
+            processed_count += 1
+            if max_cores_cfg and processed_count > max_cores_cfg:
+                break
+                
+            self.utils.log(f"Processing core pair {processed_count}: DAPI={dapi_core_name}, Stain={dapi_core_name}")
+            
+            # Create per-core working directory using DAPI name
             core_workdir = self.valis_workdir / f"core_{dapi_core_name}"
             core_workdir.mkdir(parents=True, exist_ok=True)
             
-            # Get core crop image paths using canonical names (robust to report format)
+            # Get core crop image paths using same canonical name
             dapi_crop_path = self.utils.resolve_crop_path_from_report(dapi_report, dapi_core_name)
-            stain_crop_path = self.utils.resolve_crop_path_from_report(stain_report, stain_core_name)
+            stain_crop_path = self.utils.resolve_crop_path_from_report(stain_report, dapi_core_name)
 
             if dapi_crop_path is None or stain_crop_path is None:
-                self.utils.log(f"Missing crop images for DAPI={dapi_core_name}, Stain={stain_core_name}, skipping", "warning")
+                self.utils.log(f"Missing crop images for core {dapi_core_name}, skipping", "warning")
                 continue
             
             if not dapi_crop_path.exists() or not stain_crop_path.exists():
-                self.utils.log(f"Crop images not found for DAPI={dapi_core_name}, Stain={stain_core_name}, skipping", "warning")
+                self.utils.log(f"Crop images not found for core {dapi_core_name}, skipping", "warning")
                 continue
             
-            # Extract per-core centroids using spatial filtering
+            # Extract per-core centroids using DAPI coordinates (spatial filtering)
             dapi_x, dapi_y, dapi_r = dapi_cores[i]
             core_centroids = self.utils.extract_core_centroids(
                 preprocessed_centroids, dapi_x, dapi_y, dapi_r * 1.2  # 20% padding
@@ -206,6 +240,7 @@ class ValisEngine:
                         base_cmd.extend(['--heartbeat_s', str(heartbeat_s)])
                 except Exception:
                     pass
+
 
                 # Persist invoked command for reproducibility
                 try:
@@ -324,6 +359,38 @@ class ValisEngine:
         
         self.utils.log(f"VALIS registration completed: {len(transformed_files)} cores processed successfully")
         return transformed_files
+    
+    def _extract_crop_bounds_from_report(self, report: dict, core_name: str) -> Optional[tuple]:
+        """Extract crop bounding box (x1, y1, x2, y2) for a core from detection report"""
+        try:
+            entries = report.get('crop_mapping', [])
+            
+            # Handle list-style crop_mapping entries
+            if isinstance(entries, list):
+                for entry in entries:
+                    entry_core_id = entry.get('core_id')
+                    entry_filename = entry.get('image_filename') or entry.get('filename')
+                    target_fname = f"{core_name}.png"
+                    
+                    if entry_core_id == core_name or entry_filename == target_fname:
+                        crop_bounds = entry.get('crop_bounds')
+                        if crop_bounds and len(crop_bounds) == 4:
+                            return tuple(crop_bounds)
+                        break
+            
+            # Handle dict-style mapping (fallback)
+            elif isinstance(entries, dict):
+                target_fname = f"{core_name}.png"
+                if target_fname in entries:
+                    # This format may not have crop_bounds, so return None
+                    pass
+            
+            self.utils.log(f"No crop bounds found for {core_name}", "debug")
+            return None
+            
+        except Exception as e:
+            self.utils.log(f"Error extracting crop bounds for {core_name}: {e}", "warning")
+            return None
     
     def aggregate_results(self, transformed_files: List[Path]) -> Path:
         """

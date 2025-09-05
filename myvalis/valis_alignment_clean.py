@@ -76,6 +76,10 @@ class AlignmentConfig:
 
         # Internal: track any stain resize scaling applied before registration
         self.stain_resize_scale = 1.0
+        
+        # Crop bounds for coordinate conversion (x1, y1, x2, y2)
+        self.crop_bounds = None  # DAPI crop bounds
+        self.stain_crop_bounds = None  # Stain crop bounds
 
 # =============================================================================
 # PREPROCESSING FUNCTIONS
@@ -460,28 +464,57 @@ def transform_centroids(centroids_tsv, transform_func, config, output_path):
     
     # Get original coordinates (in microns)
     xy_original = df[[config.centroid_x_col, config.centroid_y_col]].values
+    print(f"DEBUG: Original centroids range: X=[{xy_original[:, 0].min():.1f}, {xy_original[:, 0].max():.1f}], Y=[{xy_original[:, 1].min():.1f}, {xy_original[:, 1].max():.1f}] µm")
     
     # Step 1: Convert from microns to pixels
     xy_pixels = xy_original / config.microns_per_pixel
+    print(f"DEBUG: After µm->px conversion: X=[{xy_pixels[:, 0].min():.1f}, {xy_pixels[:, 0].max():.1f}], Y=[{xy_pixels[:, 1].min():.1f}, {xy_pixels[:, 1].max():.1f}] px")
     
     # Step 2: Scale coordinates from original DAPI space to downscaled space
     xy_scaled = xy_pixels * config.scale_factor
+    print(f"DEBUG: After scaling (factor={config.scale_factor}): X=[{xy_scaled[:, 0].min():.1f}, {xy_scaled[:, 0].max():.1f}], Y=[{xy_scaled[:, 1].min():.1f}, {xy_scaled[:, 1].max():.1f}] px")
     
     # Step 3: Account for flip if applied
     if config.flip_axis == 'x' and config.processed_dapi_shape is not None:
         processed_width = config.processed_dapi_shape[1]  # width
         xy_scaled[:, 0] = (processed_width - 1) - xy_scaled[:, 0]
+        print(f"DEBUG: After X flip (width={processed_width}): X=[{xy_scaled[:, 0].min():.1f}, {xy_scaled[:, 0].max():.1f}]")
     elif config.flip_axis == 'y' and config.processed_dapi_shape is not None:
         processed_height = config.processed_dapi_shape[0]  # height
         xy_scaled[:, 1] = (processed_height - 1) - xy_scaled[:, 1]
+        print(f"DEBUG: After Y flip (height={processed_height}): Y=[{xy_scaled[:, 1].min():.1f}, {xy_scaled[:, 1].max():.1f}]")
     
-    # Step 4: Transform to stain space using VALIS registration
+    # Step 4: CRITICAL FIX - Convert to crop-local coordinates
+    # Check if we have crop bounding box information from config
+    crop_bounds = getattr(config, 'crop_bounds', None)
+    if crop_bounds is not None:
+        x1, y1, x2, y2 = crop_bounds
+        print(f"DEBUG: Converting to crop-local coordinates using bounds: ({x1}, {y1}) to ({x2}, {y2})")
+        xy_scaled[:, 0] = xy_scaled[:, 0] - x1  # Subtract crop X offset
+        xy_scaled[:, 1] = xy_scaled[:, 1] - y1  # Subtract crop Y offset
+        print(f"DEBUG: After crop-local conversion: X=[{xy_scaled[:, 0].min():.1f}, {xy_scaled[:, 0].max():.1f}], Y=[{xy_scaled[:, 1].min():.1f}, {xy_scaled[:, 1].max():.1f}] px")
+    else:
+        print("WARNING: No crop_bounds found in config - coordinates may be misaligned!")
+    
+    # Step 5: Transform to stain space using VALIS registration
     xy_stain = transform_func(xy_scaled.astype(np.int32))
+    print(f"DEBUG: After VALIS transform: X=[{xy_stain[:, 0].min():.1f}, {xy_stain[:, 0].max():.1f}], Y=[{xy_stain[:, 1].min():.1f}, {xy_stain[:, 1].max():.1f}] px")
 
-    # Map back to original stain crop pixel space if we resized stain before registration
+    # Step 6: Convert back to global stain coordinates if we had crop bounds
+    if crop_bounds is not None:
+        # For stain, we need the stain crop bounds, which should be passed separately
+        stain_crop_bounds = getattr(config, 'stain_crop_bounds', None)
+        if stain_crop_bounds is not None:
+            sx1, sy1, sx2, sy2 = stain_crop_bounds
+            xy_stain[:, 0] = xy_stain[:, 0] + sx1  # Add stain crop X offset
+            xy_stain[:, 1] = xy_stain[:, 1] + sy1  # Add stain crop Y offset
+            print(f"DEBUG: After converting back to global stain coordinates: X=[{xy_stain[:, 0].min():.1f}, {xy_stain[:, 0].max():.1f}], Y=[{xy_stain[:, 1].min():.1f}, {xy_stain[:, 1].max():.1f}] px")
+
+    # Step 7: Map back to original stain crop pixel space if we resized stain before registration
     scale_back = getattr(config, 'stain_resize_scale', 1.0)
     if scale_back and scale_back != 1.0:
         xy_stain = np.rint(xy_stain.astype(float) / float(scale_back)).astype(np.int32)
+        print(f"DEBUG: After scaling back (factor=1/{scale_back}): X=[{xy_stain[:, 0].min():.1f}, {xy_stain[:, 0].max():.1f}], Y=[{xy_stain[:, 1].min():.1f}, {xy_stain[:, 1].max():.1f}] px")
     
     # Add transformed coordinates to dataframe
     df['Stain_X_px'] = xy_stain[:, 0]

@@ -23,7 +23,7 @@ global:
   microns_per_pixel: 0.5072  # Default µm/px conversion
   cores_per_row: 4  # Expected cores per row for grid layout
   expected_cores: 20  # Based on DAPI command (stain shows 9, but using max expected)
-  flip_axis: "y"  # Vertical flip for DAPI preprocessing
+  flip_axis: "x"  # Horizontal flip for DAPI preprocessing
   verbose: true
   max_cores: 19  
 

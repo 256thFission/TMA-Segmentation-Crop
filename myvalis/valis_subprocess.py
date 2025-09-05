@@ -92,6 +92,9 @@ def main(argv=None) -> int:
     # Overlays
     parser.add_argument("--save_overlays", type=str, default="true")
     parser.add_argument("--overlay_alpha", type=float, default=0.5)
+    # Crop bounds for coordinate conversion
+    parser.add_argument("--crop_bounds", type=str, default=None, help="DAPI crop bounds as 'x1,y1,x2,y2'")
+    parser.add_argument("--stain_crop_bounds", type=str, default=None, help="Stain crop bounds as 'x1,y1,x2,y2'")
     # Output
     parser.add_argument("--result_json", type=str, default=None)
     # Heartbeat (seconds); if provided and > 0, emit periodic status to STDERR
@@ -140,6 +143,23 @@ def main(argv=None) -> int:
         })
         cfg.save_overlays = _to_bool(args.save_overlays, True)
         cfg.overlay_alpha = float(args.overlay_alpha)
+        
+        # Parse crop bounds if provided
+        if args.crop_bounds:
+            try:
+                bounds = [float(x.strip()) for x in args.crop_bounds.split(',')]
+                if len(bounds) == 4:
+                    cfg.crop_bounds = tuple(bounds)
+            except (ValueError, IndexError):
+                print(f"Warning: Invalid crop_bounds format: {args.crop_bounds}", file=sys.stderr)
+        
+        if args.stain_crop_bounds:
+            try:
+                stain_bounds = [float(x.strip()) for x in args.stain_crop_bounds.split(',')]
+                if len(stain_bounds) == 4:
+                    cfg.stain_crop_bounds = tuple(stain_bounds)
+            except (ValueError, IndexError):
+                print(f"Warning: Invalid stain_crop_bounds format: {args.stain_crop_bounds}", file=sys.stderr)
 
         # Ensure workdir exists
         cfg.workdir.mkdir(parents=True, exist_ok=True)
